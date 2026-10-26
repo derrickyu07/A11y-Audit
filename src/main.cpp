@@ -1,4 +1,5 @@
 ﻿#include "com.h"
+#include "rules.h"
 #include "uia_tree.h"
 #include <fcntl.h>
 #include <io.h>
@@ -7,6 +8,61 @@
 
 using Microsoft::WRL::ComPtr;
 
+#include <algorithm>
+#include <iomanip>
+
+namespace {
+
+	const wchar_t* severityLabel(Severity severity) {
+		switch (severity) {
+		case Severity::Error:   return L"ERROR";
+		case Severity::Warning: return L"WARNING";
+		}
+		return L"UNKNOWN";
+	}
+
+	// "button \"Save\"", shortened if too long to keep columns aligned.
+	std::wstring describe(const ElementInfo& element) {
+		std::wstring text = element.localizedType + L" \"" + element.name + L"\"";
+		const std::size_t maxLength = 32;
+		if (text.size() > maxLength) {
+			text = text.substr(0, maxLength - 3) + L"...";
+		}
+		return text;
+	}
+
+	std::size_t countSeverity(const std::vector<Finding>& findings, Severity severity) {
+		return static_cast<std::size_t>(std::count_if(
+			findings.begin(), findings.end(),
+			[severity](const Finding& f) { return f.severity == severity; }));
+	}
+
+	// "1 error", "3 errors"
+	std::wstring plural(std::size_t count, const wchar_t* word) {
+		return std::to_wstring(count) + L" " + word + (count == 1 ? L"" : L"s");
+	}
+
+	void printReport(const std::vector<ElementInfo>& elements,
+		const std::vector<Finding>& findings) {
+		std::wstring title = elements.empty() ? L"(unknown)" : elements.front().name;
+		std::wcout << L"Scanned " << elements.size() << L" elements in \"" << title << L"\"\n\n";
+
+		for (const auto& finding : findings) {
+			std::wcout << std::left
+				<< std::setw(9) << severityLabel(finding.severity)
+				<< std::setw(34) << describe(finding.element)
+				<< std::setw(15) << finding.ruleId
+				<< finding.message << L'\n';
+		}
+		if (!findings.empty()) {
+			std::wcout << L'\n';
+		}
+
+		std::wcout << plural(countSeverity(findings, Severity::Error), L"error") << L", "
+			<< plural(countSeverity(findings, Severity::Warning), L"warning") << L'\n';
+	}
+
+}  // namespace
 int wmain(int argc, wchar_t* argv[]) {
 	_setmode(_fileno(stdout), _O_U16TEXT);
 	_setmode(_fileno(stderr), _O_U16TEXT);
@@ -35,7 +91,10 @@ int wmain(int argc, wchar_t* argv[]) {
 		ComPtr<IUIAutomationTreeWalker> walker;
 		check(automation->get_ControlViewWalker(&walker), "get_ControlViewWalker");
 
-		printTree(walker.Get(), root.Get(), 0, 8);
+		auto elements = collectElements(walker.Get(), root.Get(), 8);
+		auto findings = audit(elements, defaultRules());
+		printReport(elements, findings);
+		return countSeverity(findings, Severity::Error) > 0 ? 2 : 0;
 	}
 	catch (const std::exception& e) {
 		std::wcerr << L"error: " << e.what() << L'\n';

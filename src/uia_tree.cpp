@@ -30,7 +30,7 @@ namespace {
 		return TRUE;
 	}
 
-}  // namespace
+}
 
 HWND findWindowByTitle(const std::wstring& fragment) {
 	SearchState state{ fragment };
@@ -80,5 +80,53 @@ void printTree(IUIAutomationTreeWalker* walker,
 	}
 }
 
+ElementInfo readInfo(IUIAutomationElement* element, int depth, CONTROLTYPEID parentType) {
+	ElementInfo info;
+	info.depth = depth;
+	info.parentControlType = parentType;
+	info.name = readName(element);
+	info.localizedType = readControlType(element);
+
+	element->get_CurrentControlType(&info.controlType);
+
+	BOOL value = FALSE;
+	if (SUCCEEDED(element->get_CurrentIsKeyboardFocusable(&value))) info.keyboardFocusable = value != FALSE;
+	if (SUCCEEDED(element->get_CurrentIsEnabled(&value)))           info.enabled = value != FALSE;
+	if (SUCCEEDED(element->get_CurrentIsOffscreen(&value)))         info.offscreen = value != FALSE;
+	return info;
+}
+
+void collect(IUIAutomationTreeWalker* walker,
+	IUIAutomationElement* element,
+	int depth, int maxDepth,
+	CONTROLTYPEID parentType,
+	std::vector<ElementInfo>& out) {
+
+	out.push_back(readInfo(element, depth, parentType));
+	CONTROLTYPEID myType = out.back().controlType;
+
+	if (depth >= maxDepth) return;
+
+	ComPtr<IUIAutomationElement> child;
+	if (FAILED(walker->GetFirstChildElement(element, &child))) return;
+
+	while (child) {
+		collect(walker, child.Get(), depth + 1, maxDepth, myType, out);
+
+		ComPtr<IUIAutomationElement> nextChild;
+		if (FAILED(walker->GetNextSiblingElement(child.Get(), &nextChild))) break;
+		child = nextChild;
+
+	}
+
+}
+
+std::vector<ElementInfo> collectElements(IUIAutomationTreeWalker* walker,
+	IUIAutomationElement* root,
+	int maxDepth) {
+	std::vector<ElementInfo> elementInformation;
+	collect(walker, root, 0, maxDepth, 0, elementInformation);
+	return elementInformation;
+}
 
 // readControlType and printTree: your turn
